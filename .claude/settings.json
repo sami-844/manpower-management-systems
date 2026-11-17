@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(bun run gates)",
+      "Bash(bun run typecheck)",
+      "Bash(bun run test)",
+      "Bash(bun run test *)",
+      "Bash(bun run test:tooling)",
+      "Bash(bun run agent:doctor)",
+      "Bash(bun run --filter @mms/core typecheck)",
+      "Bash(bun run --filter @mms/api typecheck)",
+      "Bash(bun run --filter @mms/web typecheck)",
+      "Bash(bun run --filter @mms/desktop typecheck)",
+      "Bash(bun run typecheck:tooling)",
+      "Bash(cargo fmt --manifest-path apps/desktop/print-spooler/Cargo.toml)",
+      "Bash(cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(cargo fmt --manifest-path apps/desktop/print-spooler/Cargo.toml --check)",
+      "Bash(cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check)",
+      "Bash(cargo clippy --manifest-path apps/desktop/print-spooler/Cargo.toml --all-targets --message-format=short -- -D warnings)",
+      "Bash(cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --message-format=short -- -D warnings)",
+      "Bash(cargo test --manifest-path apps/desktop/print-spooler/Cargo.toml)",
+      "Bash(cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(bun test *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(bun run gates --update-lock)",
+      "Bash(bun run db:migrate *)",
+      "Bash(bun add *)",
+      "Edit(apps/desktop/src-tauri/capabilities/**)",
+      "Edit(apps/desktop/src-tauri/tauri.conf.json)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Read(./bun.lock)",
+      "Read(./**/target/**)",
+      "Read(./**/dist/**)",
+      "Read(./apps/api/drizzle/meta/**)",
+      "Read(./apps/desktop/src-tauri/gen/**)",
+      "Read(./graphify-out/*.json)",
+      "Read(./graphify-out/*.html)",
+      "Read(./graphify-out/cache/**)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(pnpm *)",
+      "Bash(yarn *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(rm -rf *)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "context7",
+    "shadcn",
+    "playwright",
+    "playwright-desktop",
+    "graphify",
+    "aws-docs",
+    "terraform"
+  ],
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
+  },
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "3"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.ts\""
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard compact",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/prompt-router.ts\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard.ts\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/bash-guard.ts\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard search --strict",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard read --strict",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-gates.ts\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-checks.ts\"",
+            "timeout": 900
+          }
+        ]
+      }
+    ]
+  }
+}

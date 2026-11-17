@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+reports/
+.stryker-tmp/
+*.log
+.env
+.env.local
+.claude/settings.local.json
+graphify-out/
+**/target/
+apps/desktop/src-tauri/gen/
+test-results/
+playwright-report/
+.DS_Store
+.wrangler/
+# Cloudflare client demo secrets for `wrangler dev` (the template is .dev.vars.example)
+.dev.vars

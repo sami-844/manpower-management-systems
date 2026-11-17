@@ -1,0 +1,94 @@
+import { createHash } from "node:crypto";
+import { Inject, Injectable } from "@nestjs/common";
+import { asc, desc, eq, sql } from "drizzle-orm";
+import { DB, type Database } from "../db/client";
+import { auditEvents } from "../db/schema";
+
+type Tx = Parameters<Parameters<Database["orm"]["transaction"]>[0]>[0];
+
+export interface AuditEntry {
+  actor: string;
+  action: string;
+  subjectType: string;
+  subjectId: string;
+  before: unknown;
+  after: unknown;
+  /** Defaults to the request's entity; set for events written outside a request scope (sign-in). */
+  entityId?: string;
+}
+
+const GENESIS = "0".repeat(64);
+const AUDIT_LOCK = 4_242_001;
+
+/** JSON with sorted keys, so the same data always hashes the same way. */
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : 1));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+}
+
+/** Round-trip through JSON so values hash the same before and after storage. */
+function normalise(value: unknown): unknown {
+  return value === undefined || value === null ? null : JSON.parse(JSON.stringify(value));
+}
+
+/**
+ * Version 1 (rows written before 2026-11-09): the entity was not hashed. Version 2 adds it, so an
+ * event moved to another entity breaks the chain. Old rows keep verifying as version 1.
+ */
+function hashOf(prevHash: string, e: Omit<AuditEntry, "entityId">, version: number, entityId: string): string {
+  const fields = [prevHash, e.actor, e.action, e.subjectType, e.subjectId, canonical(e.before), canonical(e.after)];
+  if (version >= 2) fields.push(entityId);
+  const payload = fields.join("|");
+  return createHash("sha256").update(payload).digest("hex");
+}
+
+@Injectable()
+export class AuditService {
+  constructor(@Inject(DB) private readonly db: Database) {}
+
+  /** Append an event inside the caller's transaction, so the change and its record commit together. */
+  async record(tx: Tx, entry: AuditEntry): Promise<void> {
+    const { entityId: explicit, ...rest } = entry;
+    const e = { ...rest, before: normalise(entry.before), after: normalise(entry.after) };
+    // The entity is decided here (not left to the column default) so the stored value is the hashed one.
+    const [scope] = (await tx.execute(sql`select coalesce(nullif(current_setting('app.entity_id', true), ''), 'OM-01') as entity`)) as unknown as {
+      entity: string;
+    }[];
+    const entityId = explicit ?? scope!.entity;
+    await tx.execute(sql`select pg_advisory_xact_lock(${AUDIT_LOCK})`);
+    // One chain across all entities: audit_last_hash() is SECURITY DEFINER, so a request that can
+    // only see its own entity's rows (row-level security) still links to the true last event.
+    const [last] = (await tx.execute(sql`select audit_last_hash() as hash`)) as unknown as { hash: string | null }[];
+    const prevHash = last?.hash ?? GENESIS;
+    await tx.insert(auditEvents).values({ ...e, entityId, hashVersion: 2, prevHash, hash: hashOf(prevHash, e, 2, entityId) });
+  }
+
+  async forSubject(subjectId: string) {
+    return this.db.orm
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.subjectId, subjectId))
+      .orderBy(asc(auditEvents.id));
+  }
+
+  /**
+   * Recompute the whole chain; any edited or removed row breaks it. Reads every entity's rows
+   * (outside row-level security) but returns only counts and an id, never another entity's data.
+   */
+  async verifyChain(): Promise<{ intact: boolean; checked: number; firstBrokenId: number | null }> {
+    const rows = await this.db.base.select().from(auditEvents).orderBy(asc(auditEvents.id));
+    let prevHash = GENESIS;
+    for (const row of rows) {
+      const expected = hashOf(prevHash, row as AuditEntry, row.hashVersion, row.entityId);
+      if (row.prevHash !== prevHash || row.hash !== expected) {
+        return { intact: false, checked: rows.length, firstBrokenId: row.id };
+      }
+      prevHash = row.hash;
+    }
+    return { intact: true, checked: rows.length, firstBrokenId: null };
+  }
+}
